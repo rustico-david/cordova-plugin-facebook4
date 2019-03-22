@@ -18,11 +18,13 @@
 @property (strong, nonatomic) NSString* dialogCallbackId;
 @property (strong, nonatomic) FBSDKLoginManager *loginManager;
 @property (strong, nonatomic) NSString* gameRequestDialogCallbackId;
+@property (nonatomic, assign) BOOL applicationWasActivated;
 
 - (NSDictionary *)responseObject;
 - (NSDictionary*)parseURLParams:(NSString *)query;
 - (BOOL)isPublishPermission:(NSString*)permission;
 - (BOOL)areAllPermissionsReadPermissions:(NSArray*)permissions;
+- (void)enableHybridAppEvents;
 @end
 
 @implementation FacebookConnectPlugin
@@ -52,6 +54,10 @@
 
 - (void) applicationDidBecomeActive:(NSNotification *) notification {
     [FBSDKAppEvents activateApp];
+    if (self.applicationWasActivated == NO) {
+        self.applicationWasActivated = YES;
+        [self enableHybridAppEvents];
+    }
 }
 
 #pragma mark - Cordova commands
@@ -272,9 +278,6 @@
         // Create native params
         FBSDKShareLinkContent *content = [[FBSDKShareLinkContent alloc] init];
         content.contentURL = [NSURL URLWithString:[params objectForKey:@"link"]];
-        content.contentTitle = [params objectForKey:@"caption"];
-        content.imageURL = [NSURL URLWithString:[params objectForKey:@"picture"]];
-        content.contentDescription = [params objectForKey:@"description"];
 
         self.dialogCallbackId = command.callbackId;
         [FBSDKMessageDialog showWithContent:content delegate:self];
@@ -284,9 +287,6 @@
         // Create native params
         FBSDKShareLinkContent *content = [[FBSDKShareLinkContent alloc] init];
         content.contentURL = [NSURL URLWithString:params[@"href"]];
-        content.contentTitle = params[@"caption"];
-        content.imageURL = [NSURL URLWithString:params[@"picture"]];
-        content.contentDescription = params[@"description"];
         content.hashtag = [FBSDKHashtag hashtagWithString:[params objectForKey:@"hashtag"]];
         content.quote = params[@"quote"];
 
@@ -482,33 +482,6 @@
     }];
 }
 
-- (void) appInvite:(CDVInvokedUrlCommand *) command
-{
-    NSDictionary *options = [command.arguments objectAtIndex:0];
-    NSString *url = options[@"url"];
-    NSString *picture = options[@"picture"];
-    CDVPluginResult *result;
-    self.dialogCallbackId = command.callbackId;
-
-    FBSDKAppInviteContent *content = [[FBSDKAppInviteContent alloc] init];
-
-    if (url) {
-        content.appLinkURL = [NSURL URLWithString:url];
-    }
-    if (picture) {
-        content.appInvitePreviewImageURL = [NSURL URLWithString:picture];
-    }
-
-    FBSDKAppInviteDialog *dialog = [[FBSDKAppInviteDialog alloc] init];
-    if ((url || picture) && [dialog canShow]) {
-        [FBSDKAppInviteDialog showFromViewController:[self topMostController] withContent:content delegate:self];
-    } else {
-        result = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR];
-        [self.commandDelegate sendPluginResult:result callbackId:self.dialogCallbackId];
-    }
-
-}
-
 - (void) getDeferredApplink:(CDVInvokedUrlCommand *) command
 {
     [FBSDKAppLinkUtility fetchDeferredAppLink:^(NSURL *url, NSError *error) {
@@ -682,6 +655,27 @@
     return YES;
 }
 
+/*
+ * Enable the hybrid app events for the webview.
+ * This feature only works with WKWebView so until
+ * Cordova iOS 5 is relased
+ * (https://cordova.apache.org/news/2018/08/01/future-cordova-ios-webview.html),
+ * an additional plugin (e.g cordova-plugin-wkwebview-engine) is needed.
+ */
+- (void)enableHybridAppEvents {
+    if ([self.webView isMemberOfClass:[WKWebView class]]){
+        NSString *is_enabled = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"FacebookHybridAppEvents"];
+        if([is_enabled isEqualToString:@"true"]){
+            [FBSDKAppEvents augmentHybridWKWebView:(WKWebView*)self.webView];
+            NSLog(@"FB Hybrid app events are enabled");
+        } else {
+            NSLog(@"FB Hybrid app events are not enabled");
+        }
+    } else {
+        NSLog(@"FB Hybrid app events cannot be enabled, this feature requires WKWebView");
+    }
+}
+
 # pragma mark - FBSDKSharingDelegate
 
 - (void)sharer:(id<FBSDKSharing>)sharer didCompleteWithResults:(NSDictionary *)results {
@@ -717,46 +711,6 @@
                                                       messageAsString:@"User cancelled."];
     [self.commandDelegate sendPluginResult:pluginResult callbackId:self.dialogCallbackId];
     self.dialogCallbackId = nil;
-}
-
-
-#pragma mark - FBSDKAppInviteDialogDelegate
-
-// add these methods in if you extend your sharing view controller with <FBSDKAppInviteDialogDelegate>
-- (void)appInviteDialog:(FBSDKAppInviteDialog *)appInviteDialog didCompleteWithResults:(NSDictionary *)results
-{
-
-    if (!self.dialogCallbackId) {
-        return;
-    }
-
-    NSLog(@"app invite dialog did complete");
-    NSLog(@"result::%@", results);
-
-    CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK
-                                                  messageAsDictionary:results];
-    [self.commandDelegate sendPluginResult:pluginResult callbackId:self.dialogCallbackId];
-    self.dialogCallbackId = nil;
-
-}
-
-
-
-- (void)appInviteDialog:(FBSDKAppInviteDialog *)appInviteDialog didFailWithError:(NSError *)error
-{
-    if (!self.dialogCallbackId) {
-        return;
-    }
-
-    NSLog(@"app invite dialog did fail");
-    NSLog(@"error::%@", error);
-
-    CDVPluginResult *pluginResult;
-    pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR
-                                     messageAsString:[NSString stringWithFormat:@"Error: %@", error.description]];
-    [self.commandDelegate sendPluginResult:pluginResult callbackId:self.dialogCallbackId];
-    self.dialogCallbackId = nil;
-
 }
 
 
